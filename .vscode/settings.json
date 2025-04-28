@@ -9,6 +9,15 @@
       "name": "PG Local",
       "database": "sqltrain",
       "username": "postgres"
+    },
+    {
+      "previewLimit": 50,
+      "server": "35.198.220.146",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "GCP-Postgre",
+      "database": "manhvd_exercise_db",
+      "username": "manhvd"
     }
   ]
 }
