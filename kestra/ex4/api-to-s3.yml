@@ -1,0 +1,62 @@
+id: api_to_s3
+namespace: exercise
+description: "A workflow that fetches users data from JSONPlaceholder API and stores responses in AWS S3"
+
+tasks:
+  - id: fetch_data
+    type: io.kestra.plugin.scripts.python.Script
+    outputFiles:
+      - "api_response.json"
+    script: |
+      import requests
+      import json
+      import os
+      from datetime import datetime
+
+      # API configuration
+      API_URL = "https://jsonplaceholder.typicode.com/users"
+
+      # Fetch data from API
+      print("Fetching users data from API...")
+      response = requests.get(API_URL)
+
+      if response.status_code != 200:
+          raise Exception(f"API call failed: {response.text}")
+
+      # Save response to file
+      response_data = response.json()
+
+      # Add metadata
+      for user in response_data:
+          user["fetched_at"] = datetime.now().isoformat()
+          # Flatten address and company objects
+          user["street"] = user["address"]["street"]
+          user["suite"] = user["address"]["suite"]
+          user["city"] = user["address"]["city"]
+          user["zipcode"] = user["address"]["zipcode"]
+          user["company_name"] = user["company"]["name"]
+          user["company_catchphrase"] = user["company"]["catchPhrase"]
+          user["company_bs"] = user["company"]["bs"]
+          
+          # Remove nested objects
+          del user["address"]
+          del user["company"]
+
+      output_path = "api_response.json"
+      with open(output_path, "w") as f:
+          json.dump(response_data, f, indent=2)
+
+      print(f"Successfully saved users data to {output_path}")
+
+  - id: upload_to_s3
+    type: io.kestra.plugin.aws.s3.Upload
+    accessKeyId: "{{kv('aws_access_key', 'exercise')}}"
+    secretKeyId: "{{kv('aws_secret_key', 'exercise')}}"
+    region: "{{kv('aws_region', 'exercise')}}"
+    bucket: "{{kv('s3_bucket', 'exercise')}}"
+    from: "{{outputs.fetch_data.outputFiles['api_response.json']}}"
+    key: "api_responses/api_response_{{trigger.date ?? execution.startDate | timestamp}}.json"
+
+  - id: log_completion
+    type: io.kestra.plugin.core.log.Log
+    message: "Workflow completed successfully. Users data has been stored in S3."

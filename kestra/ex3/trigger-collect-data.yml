@@ -1,0 +1,74 @@
+id: scheduled_api_to_csv
+namespace: exercise
+description: "A scheduled workflow that fetches users data from API every minute"
+
+triggers:
+  - id: every_minute
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "* * * * *" # Run every minute
+
+errors:
+  - id: fetch-api-error
+    type: io.kestra.plugin.core.http.Request
+    uri: https://jsonplaceholder.typicode.com/users
+    timeout: PT30S
+    retry:
+      type: constant
+      interval: PT5S
+      maxAttempt: 3
+
+tasks:
+  - id: fetch_and_convert
+    type: io.kestra.plugin.scripts.python.Script
+    outputFiles:
+      - "output_{{trigger.date ?? execution.startDate | timestamp}}.csv" # Use milliseconds since epoch
+    script: |
+      import requests
+      import json
+      import csv
+      import os
+      import datetime
+
+      # Fetch data from API
+      print("Fetching users data from API...")
+      response = requests.get("https://jsonplaceholder.typicode.com/users", timeout=10)
+      data = response.json()
+      print(f"Successfully fetched {len(data)} users from API")
+
+      # Process data
+      print("Processing data...")
+      processed_data = []
+      for user in data:
+          processed_user = user.copy()
+          # Flatten address and company objects
+          processed_user['street'] = user['address']['street']
+          processed_user['suite'] = user['address']['suite']
+          processed_user['city'] = user['address']['city']
+          processed_user['zipcode'] = user['address']['zipcode']
+          processed_user['company_name'] = user['company']['name']
+          processed_user['company_catchphrase'] = user['company']['catchPhrase']
+          processed_user['company_bs'] = user['company']['bs']
+          processed_user['processed_at'] = datetime.datetime.now().isoformat()
+          
+          # Remove nested objects
+          del processed_user['address']
+          del processed_user['company']
+          
+          processed_data.append(processed_user)
+
+      # Write to CSV
+      print("Writing to CSV...")
+      output_path = "output_{{trigger.date ?? execution.startDate | timestamp}}.csv"
+      with open(output_path, "w", newline="") as csv_file:
+          if processed_data and len(processed_data) > 0:
+              fieldnames = processed_data[0].keys()
+              writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+              writer.writeheader()
+              writer.writerows(processed_data)
+
+      print(f"Successfully converted users data to CSV. Rows processed: {len(processed_data)}")
+    description: "Fetch users data from API and convert to CSV in a single task"
+
+  - id: log_completion
+    type: io.kestra.plugin.core.log.Log
+    message: "Workflow completed successfully. Users data has been fetched from API and stored as CSV."
