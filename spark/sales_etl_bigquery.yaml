@@ -1,0 +1,241 @@
+id: sales_etl_bigquery_workflow
+namespace: sales.analysis
+description: ETL workflow for sales data with BigQuery star schema
+
+tasks:
+  # 1. Extract data from PostgreSQL
+  - id: extract_postgres_data
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    description: Extract sales data from PostgreSQL
+    url: jdbc:postgresql://localhost:5432/sqltrain
+    username: postgres
+    password: postgres
+    sql: |
+      -- Extract sales data
+      SELECT * FROM sales
+      WHERE date >= CURRENT_DATE - INTERVAL '30 days';
+
+      -- Extract store data
+      SELECT * FROM stores;
+
+      -- Extract product data
+      SELECT * FROM products;
+    outputFile: data/postgres_data.csv
+
+  # 2. Extract data from external API
+  - id: extract_api_data
+    type: io.kestra.core.tasks.scripts.Python
+    description: Extract data from external API
+    inputFiles:
+      data/api_config.json: |
+        {
+          "api_url": "https://api.example.com/sales",
+          "api_key": "your_api_key"
+        }
+    script: |
+      import requests
+      import json
+      import pandas as pd
+
+      # Read API config
+      with open('data/api_config.json', 'r') as f:
+          config = json.load(f)
+
+      # Make API request
+      response = requests.get(
+          config['api_url'],
+          headers={'Authorization': f"Bearer {config['api_key']}"}
+      )
+
+      # Save response to CSV
+      data = response.json()
+      df = pd.DataFrame(data)
+      df.to_csv('data/api_data.csv', index=False)
+
+  # 3. Transform data using PySpark and load to BigQuery
+  - id: transform_and_load
+    type: io.kestra.core.tasks.scripts.Python
+    description: Transform data using PySpark and load to BigQuery
+    inputFiles:
+      data/transform.py: |
+        from pyspark.sql import SparkSession
+        from pyspark.sql.functions import sum, avg, count, col, desc, month, year, to_date
+        from pyspark.sql.window import Window
+
+        # Initialize Spark
+        spark = SparkSession.builder \
+            .appName("Sales ETL") \
+            .config("spark.jars", "gs://spark-lib/bigquery/spark-bigquery-latest_2.12.jar") \
+            .getOrCreate()
+
+        # Read data
+        sales_df = spark.read.csv("data/postgres_data.csv", header=True, inferSchema=True)
+        api_df = spark.read.csv("data/api_data.csv", header=True, inferSchema=True)
+
+        # Create dimension tables
+        # 1. Date Dimension
+        date_dim = sales_df.select(
+            to_date("date").alias("date_key"),
+            year("date").alias("year"),
+            month("date").alias("month"),
+            dayofmonth("date").alias("day")
+        ).distinct()
+
+        # 2. Store Dimension
+        store_dim = sales_df.select(
+            "store_id",
+            "store_name",
+            "region",
+            "city",
+            "state"
+        ).distinct()
+
+        # 3. Product Dimension
+        product_dim = sales_df.select(
+            "product_id",
+            "product_name",
+            "category",
+            "subcategory",
+            "price"
+        ).distinct()
+
+        # Create fact table
+        sales_fact = sales_df.join(date_dim, to_date("date") == date_dim.date_key) \
+            .join(store_dim, "store_id") \
+            .join(product_dim, "product_id") \
+            .select(
+                "date_key",
+                "store_id",
+                "product_id",
+                "quantity",
+                "revenue",
+                "discount"
+            )
+
+        # Write to BigQuery
+        # Write dimension tables
+        date_dim.write \
+            .format("bigquery") \
+            .option("table", "sales_warehouse.date_dim") \
+            .option("temporaryGcsBucket", "your-gcs-bucket") \
+            .mode("overwrite") \
+            .save()
+            
+        store_dim.write \
+            .format("bigquery") \
+            .option("table", "sales_warehouse.store_dim") \
+            .option("temporaryGcsBucket", "your-gcs-bucket") \
+            .mode("overwrite") \
+            .save()
+            
+        product_dim.write \
+            .format("bigquery") \
+            .option("table", "sales_warehouse.product_dim") \
+            .option("temporaryGcsBucket", "your-gcs-bucket") \
+            .mode("overwrite") \
+            .save()
+
+        # Write fact table
+        sales_fact.write \
+            .format("bigquery") \
+            .option("table", "sales_warehouse.sales_fact") \
+            .option("temporaryGcsBucket", "your-gcs-bucket") \
+            .mode("append") \
+            .save()
+
+        # Stop Spark
+        spark.stop()
+    requirements:
+      - pyspark==3.5.0
+      - pandas==2.1.0
+      - google-cloud-bigquery==3.11.4
+
+  # 4. Create BigQuery views for common queries
+  - id: create_bigquery_views
+    type: io.kestra.plugin.gcp.bigquery.Query
+    description: Create BigQuery views for common queries
+    projectId: your-project-id
+    location: US
+    sql: |
+      -- Sales by region view
+      CREATE OR REPLACE VIEW sales_warehouse.sales_by_region AS
+      SELECT 
+        s.region,
+        SUM(f.quantity) as total_quantity,
+        SUM(f.revenue) as total_revenue
+      FROM sales_warehouse.sales_fact f
+      JOIN sales_warehouse.store_dim s ON f.store_id = s.store_id
+      GROUP BY s.region;
+
+      -- Top products view
+      CREATE OR REPLACE VIEW sales_warehouse.top_products AS
+      SELECT 
+        p.product_name,
+        p.category,
+        SUM(f.quantity) as total_quantity,
+        SUM(f.revenue) as total_revenue
+      FROM sales_warehouse.sales_fact f
+      JOIN sales_warehouse.product_dim p ON f.product_id = p.product_id
+      GROUP BY p.product_name, p.category
+      ORDER BY total_revenue DESC;
+
+  # 5. Send notification
+  - id: send_notification
+    type: io.kestra.core.tasks.scripts.Python
+    description: Send email notification
+    script: |
+      import smtplib
+      from email.mime.text import MIMEText
+      from email.mime.multipart import MIMEMultipart
+
+      # Email configuration
+      sender_email = "your_email@example.com"
+      receiver_email = "receiver@example.com"
+      password = "your_email_password"
+
+      # Create message
+      msg = MIMEMultipart()
+      msg['From'] = sender_email
+      msg['To'] = receiver_email
+      msg['Subject'] = "Sales ETL Process Completed"
+
+      body = "The sales ETL process has completed successfully. Data has been loaded to BigQuery."
+      msg.attach(MIMEText(body, 'plain'))
+
+      # Send email
+      with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+          server.login(sender_email, password)
+          server.send_message(msg)
+
+triggers:
+  - id: schedule
+    type: io.kestra.core.models.triggers.types.Schedule
+    cron: "0 0 * * *" # Run daily at midnight
+
+error:
+  - id: error_notification
+    type: io.kestra.core.tasks.scripts.Python
+    description: Send error notification
+    script: |
+      import smtplib
+      from email.mime.text import MIMEText
+      from email.mime.multipart import MIMEMultipart
+
+      # Email configuration
+      sender_email = "your_email@example.com"
+      receiver_email = "receiver@example.com"
+      password = "your_email_password"
+
+      # Create message
+      msg = MIMEMultipart()
+      msg['From'] = sender_email
+      msg['To'] = receiver_email
+      msg['Subject'] = "Sales ETL Process Failed"
+
+      body = "The sales ETL process has failed. Please check the logs for details."
+      msg.attach(MIMEText(body, 'plain'))
+
+      # Send email
+      with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+          server.login(sender_email, password)
+          server.send_message(msg)
