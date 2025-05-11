@@ -4,27 +4,49 @@ import time
 from datetime import datetime
 from confluent_kafka import Producer
 
-producer = Producer({'bootstrap.servers': 'localhost:9092'})
-topic = 'ecommerce_transactions'
 
-user_ids = [f"user_{i}" for i in range(1, 6)]
-product_ids = [f"product_{i}" for i in range(100, 106)]
+# Cấu hình Kafka Producer
+conf = {
+    'bootstrap.servers': 'localhost:9092',  # Nếu chạy trong container: dùng 'kafka:9092'
+    'client.id': 'python-producer'
+}
 
-print("Starting e-commerce transaction producer (Ctrl+C to stop)...")
+producer = Producer(conf)
+
+# Callback khi gửi thành công hoặc thất bại
+def delivery_report(err, msg):
+    if err is not None:
+        print('❌ Delivery failed:', err)
+    else:
+        print(f'✅ Delivered to {msg.topic()} [{msg.partition()}] @ offset {msg.offset()}')
+
+print("🚀 Kafka Producer is running... Press Ctrl+C to stop.")
+
 try:
     while True:
+        # Tạo dữ liệu sự kiện giả lập
         event = {
-            "user_id": random.choice(user_ids),
-            "product_id": random.choice(product_ids),
-            "amount": random.randint(100000, 2000000),
-            "timestamp": datetime.now().isoformat()
+            "user_id": random.randint(1, 100),
+            "event_type": random.choice(["click", "view", "purchase"]),
+            "timestamp": int(time.time()),
+            "datetime": datetime.utcnow().isoformat()
         }
-        producer.produce(topic, value=json.dumps(event).encode('utf-8'))
-        print(f"Produced: {event}")
-        producer.poll(0)
-        time.sleep(20)
-except KeyboardInterrupt:
-    print("\nStopped producer.")
-finally:
-    producer.flush()
 
+        # Gửi dữ liệu đến topic Kafka
+        producer.produce(
+            topic='clickstream-topic',
+            value=json.dumps(event),
+            callback=delivery_report
+        )
+
+        # Gọi poll để xử lý callback
+        producer.poll(0)
+        print("📤 Sent:", event)
+        time.sleep(1)
+
+except KeyboardInterrupt:
+    print("\n🛑 Stopping producer...")
+finally:
+    # Đảm bảo gửi hết message trong hàng đợi
+    producer.flush()
+    print("✅ Producer shut down cleanly.")
