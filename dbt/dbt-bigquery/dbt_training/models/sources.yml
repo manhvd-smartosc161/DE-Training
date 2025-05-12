@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: sales_data_view
+    description: "View showing all sales data"
+    columns:
+      - name: date
+        description: "Date of record"
+      - name: salesperson
+        description: "Name of the salesperson"
+      - name: lead_name
+        description: "Name of the lead/prospect"
+      - name: segment
+        description: "Market segment (SMB, Enterprise, Startup)"
+      - name: region
+        description: "Sales region (US, EMEA, APAC)"
+      - name: target_close
+        description: "Target close date"
+      - name: forecasted_monthly_revenue
+        description: "Forecasted monthly revenue amount"
+      - name: opportunity_stage
+        description: "Current stage of opportunity"
+      - name: weighted_revenue
+        description: "Revenue weighted by probability"
+      - name: closed_opportunity
+        description: "Whether opportunity is closed (true/false)"
+      - name: active_opportunity
+        description: "Whether opportunity is active (true/false)"
+      - name: latest_status_entry
+        description: "Timestamp of latest status update"
+
+sources:
+  - name: bigquery_training
+    database: training-de-457603
+    schema: bigquery_train
+    tables:
+      - name: sales_data
+        description: "Raw sales opportunity data from CRM"

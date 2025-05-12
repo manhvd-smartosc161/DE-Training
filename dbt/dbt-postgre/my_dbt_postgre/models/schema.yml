@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: cleaned_customer
+    description: "Bảng khách hàng đã được làm sạch, loại bỏ NULL email và chuẩn hóa ngày"
+    columns:
+      - name: customer_id
+        description: "ID của khách hàng"
+        tests:
+          - not_null
+          - unique
+
+      - name: email
+        description: "Email của khách hàng (không null)"
+        tests:
+          - not_null
+          - unique
+
+      - name: signup_date
+        description: "Ngày khách hàng đăng ký"
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "{{ column_name }} <= CURRENT_DATE"
