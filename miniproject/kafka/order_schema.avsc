@@ -1,0 +1,17 @@
+{
+    "type": "record",
+    "name": "Order",
+    "fields": [
+        {"name": "id", "type": "int"},
+        {"name": "account_id", "type": "int"},
+        {"name": "occurred_at", "type": "string"},
+        {"name": "standard_qty", "type": "int"},
+        {"name": "gloss_qty", "type": "int"},
+        {"name": "poster_qty", "type": "int"},
+        {"name": "total", "type": "int"},
+        {"name": "standard_amt_usd", "type": "float"},
+        {"name": "gloss_amt_usd", "type": "float"},
+        {"name": "poster_amt_usd", "type": "float"},
+        {"name": "total_amt_usd", "type": "float"}
+    ]
+}
